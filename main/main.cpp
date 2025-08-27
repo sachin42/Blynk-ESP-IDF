@@ -3,7 +3,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "esp_log.h"
-#include "wifi_connect.h"
+#include "WiFi.h"
 #include "WString.h"
 #include "config_b.h"
 #include "esp_wifi.h"
@@ -96,9 +96,7 @@ extern "C" void app_main(void)
   esp_log_level_set("wifi_prov_scheme_ble", ESP_LOG_ERROR);
   esp_log_level_set("esp_netif_handlers", ESP_LOG_ERROR);
   esp_log_level_set("gpio", ESP_LOG_ERROR);
-  wifi_begin();
-  vTaskDelay(pdMS_TO_TICKS(10));
-
+  WiFi.begin();
   Blynk.begin(BLYNK_TOKEN, BLYNK_SERVER, 8080);
 
   Blynk.setProperty(V1,"onLabel", "Y");
@@ -113,6 +111,6 @@ extern "C" void app_main(void)
   {
     Blynk.run();
     timer.run();
-    vTaskDelay(pdMS_TO_TICKS(10));
+    vTaskDelay(1);
   }
 }

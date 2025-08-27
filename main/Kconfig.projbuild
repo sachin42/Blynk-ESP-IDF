@@ -1,0 +1,30 @@
+menu "Project Configuration"
+
+    config USE_BLE_PROVISION
+        bool "Use BLE for provisioning"
+        default y
+        help
+            Enable BLE provisioning for the device.
+
+    if !USE_BLE_PROVISION
+        config WIFI_AP_NAME
+            string "WiFi AP Name"
+            default "project"
+            help
+                WiFi Access Point name if BLE provisioning is not used.
+
+        config WIFI_AP_PASSWORD
+            string "WiFi AP Password"
+            default "12345678"
+            help
+                WiFi Access Point password if BLE provisioning is not used.
+    endif
+
+    config WIFI_RESET_TIMEOUT
+        int "WiFi reset timeout (minutes)"
+        default 5
+        range 1 10
+        help
+            Time in minutes after which device will reset if not connected to WiFi.
+
+endmenu
