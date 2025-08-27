@@ -29,7 +29,7 @@ static EventGroupHandle_t wifi_event_group;
 #define PROV_TRANSPORT_BLE "ble"
 #define QRCODE_BASE_URL "https://espressif.github.io/esp-jumpstart/qrcode.html"
 
-/* Event handler for catching system events */
+/* Event handler for catching syste events */
 static void event_handler(void *arg, esp_event_base_t event_base, int32_t event_id, void *event_data)
 {
     static int retries;
@@ -259,7 +259,7 @@ void wifi_begin(void)
 
     // printf("ssid %s", ssid);
     // printf("pass %s", pass);
-    // Set WiFi configuration
+    // Set WiFi  configuration
     wifi_config_t wifi_config = {
         .sta = {
             .ssid = "Wokwi-GUEST",
