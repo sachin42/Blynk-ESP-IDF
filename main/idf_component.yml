@@ -15,3 +15,4 @@ dependencies:
   #   # All dependencies of `main` are public by default.
   #   public: true
   sachin42/blynk: ^1.0.0
+  sachin42/wifi: ^1.0.2
