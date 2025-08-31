@@ -4,9 +4,9 @@
 #include "freertos/task.h"
 #include "esp_log.h"
 #include "WiFi.h"
+#include "Ethernet.h"
 #include "WString.h"
 #include "config_b.h"
-#include "esp_wifi.h"
 
 // #define BLYNK_DEBUG
 #define BLYNK_PRINT stdout
@@ -30,22 +30,8 @@ BLYNK_WRITE(V0)
   if (receivedCommand == "help")
   {
     terminal.println("Available Commands:");
-    terminal.println("- status: Chec device status");
     terminal.println("- restart: Restart the device");
     terminal.println("- clear: Clear the terminal");
-  }
-  else if (receivedCommand == "status")
-  {
-    wifi_ap_record_t ap_info;
-    if (esp_wifi_sta_get_ap_info(&ap_info) == ESP_OK)
-    {
-      terminal.printf("Connected to SSID: %s\n", ap_info.ssid);
-      terminal.printf("Signal strength (RSSI): %d dBm\n", ap_info.rssi);
-    }
-    else
-    {
-      ESP_LOGW("MAIN", "Wi-Fi not connected");
-    }
   }
   else if (receivedCommand == "restart")
   {
@@ -79,6 +65,7 @@ BLYNK_WRITE(V2)
   printf("Speed: %f\n", gps.getSpeed());
   printf("Altitude: %f\n", gps.getAltitude());
 }
+
 BLYNK_WRITE(V3)
 {
  // Acceleration data
@@ -96,7 +83,7 @@ extern "C" void app_main(void)
   esp_log_level_set("wifi_prov_scheme_ble", ESP_LOG_ERROR);
   esp_log_level_set("esp_netif_handlers", ESP_LOG_ERROR);
   esp_log_level_set("gpio", ESP_LOG_ERROR);
-  WiFi.begin();
+  Eth.begin();
   Blynk.begin(BLYNK_TOKEN, BLYNK_SERVER, 8080);
 
   Blynk.setProperty(V1,"onLabel", "Y");
