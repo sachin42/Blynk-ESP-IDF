@@ -3,6 +3,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "esp_log.h"
+#include "esp_http_client.h"
 #include "WiFi.h"
 #include "Ethernet.h"
 #include "WString.h"
@@ -80,6 +81,68 @@ void cb()
   Blynk.virtualWrite(13, "hello");
 }
 
+// ---------------------------------------------------------------------------
+// HTTP example task — runs on core 1, independent of Blynk (core 0).
+// Fetches http://httpbin.org/get every 10 s, logs status code + body snippet.
+// Shows pattern: HTTP client coexisting with Blynk, zero locking needed.
+// ---------------------------------------------------------------------------
+static const char *HTTP_TAG = "http_task";
+
+static esp_err_t http_event_handler(esp_http_client_event_t *evt)
+{
+    switch (evt->event_id) {
+    case HTTP_EVENT_ON_DATA:
+        if (!esp_http_client_is_chunked_response(evt->client)) {
+            // Print up to 128 chars so log isn't flooded
+            int print_len = evt->data_len < 128 ? evt->data_len : 128;
+            ESP_LOGI(HTTP_TAG, "Body[%d B]: %.*s%s",
+                     evt->data_len, print_len, (char *)evt->data,
+                     evt->data_len > 128 ? "..." : "");
+        }
+        break;
+    case HTTP_EVENT_ON_FINISH:
+        ESP_LOGI(HTTP_TAG, "Request complete");
+        break;
+    case HTTP_EVENT_DISCONNECTED:
+        ESP_LOGI(HTTP_TAG, "Disconnected");
+        break;
+    default:
+        break;
+    }
+    return ESP_OK;
+}
+
+static void http_task(void *)
+{
+    // Wait for network before first request
+    vTaskDelay(pdMS_TO_TICKS(3000));
+
+    esp_http_client_config_t config = {};
+    config.url            = "http://httpbin.org/get";
+    config.event_handler  = http_event_handler;
+    config.timeout_ms     = 8000;
+
+    for (;;) {
+        esp_http_client_handle_t client = esp_http_client_init(&config);
+
+        esp_err_t err = esp_http_client_perform(client);
+        if (err == ESP_OK) {
+            int status = esp_http_client_get_status_code(client);
+            int64_t len = esp_http_client_get_content_length(client);
+            ESP_LOGI(HTTP_TAG, "HTTP GET status=%d, content_length=%lld",
+                     status, len);
+
+            // Forward status to Blynk V7 — thread-safe, no lock needed
+            Blynk.virtualWrite(V7, status);
+        } else {
+            ESP_LOGE(HTTP_TAG, "HTTP GET failed: %s", esp_err_to_name(err));
+        }
+
+        esp_http_client_cleanup(client);
+        vTaskDelay(pdMS_TO_TICKS(10000));
+    }
+}
+
 extern "C" void app_main(void)
 {
   esp_log_level_set("wifi", ESP_LOG_ERROR);
@@ -113,6 +176,8 @@ extern "C" void app_main(void)
   terminal.println("This is a test message.");
   terminal.flush();
 
-  // app_main can now do other networking / sensor work without starving Blynk.
+  // HTTP task on core 1 — completely independent of Blynk task on core 0.
+  xTaskCreatePinnedToCore(http_task, "http", 8192, NULL, 4, NULL, 1);
+
   vTaskDelete(NULL);
 }
