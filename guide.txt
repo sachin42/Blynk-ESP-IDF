@@ -1,0 +1,195 @@
+● BlynkLockGuard usage
+
+  What it does: RAII wrapper around recursive mutex. Locks on construction, unlocks on scope exit (destructor). Protects Blynk transport/state from concurrent access across tasks.
+  Rule
+  Any Blynk.* call from outside a BLYNK_WRITE/BLYNK_READ handler needs lock.
+  Calls inside handlers — already locked by Blynk task. Don't double-lock (recursive mutex tolerates it but waste).
+
+  Pattern
+
+  {
+      BlynkLockGuard g;       // lock acquired
+      Blynk.virtualWrite(V1, value);
+      Blynk.setProperty(V2, "color", "#FF0000");
+  }                            // unlock auto (g destroyed)
+
+  Braces define scope = lock duration. Keep scope tight — hold only across Blynk calls, not slow work.
+
+  Good
+
+  void sensorTask(void*) {
+      for (;;) {
+          float t = readSensor();          // outside lock
+          {
+              BlynkLockGuard g;
+              Blynk.virtualWrite(V5, t);   // inside lock
+          }
+          vTaskDelay(pdMS_TO_TICKS(1000));
+      }
+  }
+
+  Bad — lock too long
+
+  {
+      BlynkLockGuard g;
+      float t = readSensorSlow();   // blocks Blynk task!
+      Blynk.virtualWrite(V5, t);
+  }
+
+  Fix: read first, lock only for virtualWrite.
+
+  Bad — lock inside handler
+
+  BLYNK_WRITE(V1) {
+      BlynkLockGuard g;              // redundant; already held
+      Blynk.virtualWrite(V2, ...);   // just call directly
+  }
+
+  Multiple calls — one lock
+
+  {
+      BlynkLockGuard g;
+      Blynk.virtualWrite(V1, a);
+      Blynk.virtualWrite(V2, b);
+      Blynk.virtualWrite(V3, c);
+  }
+
+  One lock, three writes. Cheaper than three separate locks.
+
+  Early return / exception safe
+
+  void publish() {
+      BlynkLockGuard g;
+      if (!Blynk.connected()) return;  // unlock auto on return
+      Blynk.virtualWrite(V1, 42);
+  }                                     // unlock auto
+
+  No BLYNK_UNLOCK() needed — destructor handles it.
+
+  C-style alt (no RAII)
+
+  BLYNK_LOCK();
+  Blynk.virtualWrite(V1, x);
+  BLYNK_UNLOCK();
+
+  Use guard in C++. Use macros only in C or when scope doesn't fit.
+
+  Don't lock before BlynkTaskStart
+
+  Mutex created inside BlynkTaskStart(). Calling guard before = no-op (macros check null). Safe but useless. Always start task first, poll Blynk.connected(), then lock.
+
+  Don't call from ISR
+
+  xSemaphoreTakeRecursive not ISR-safe. Use queue → Blynk task instead.
+
+  Cheat sheet
+
+  ┌───────────────────────────────────────────────────┬─────────────────────────┐
+  │                Where calling from                 │          Lock?          │
+  ├───────────────────────────────────────────────────┼─────────────────────────┤
+  │ BLYNK_WRITE(Vx) handler                           │ No                      │
+  ├───────────────────────────────────────────────────┼─────────────────────────┤
+  │ BLYNK_CONNECTED() handler                         │ No                      │
+  ├───────────────────────────────────────────────────┼─────────────────────────┤
+  │ Timer callback (registered via timer.setInterval) │ No (runs in Blynk task) │
+  ├───────────────────────────────────────────────────┼─────────────────────────┤
+  │ app_main                                          │ Yes                     │
+  ├───────────────────────────────────────────────────┼─────────────────────────┤
+  │ Other FreeRTOS task                               │ Yes                     │
+  ├───────────────────────────────────────────────────┼─────────────────────────┤
+  │ WiFi/Ethernet event handler                       │ Yes                     │
+  ├───────────────────────────────────────────────────┼─────────────────────────┤
+  │ ISR                                               │ Neither — use queue     │
+  └───────────────────────────────────────────────────┴─────────────────────────┘
+
+
+
+
+
+
+
+
+
+
+
+Correct — BLYNK_CONNECTED() fires on every (re)login. Repeated setInterval leaks slots until MAX_TIMERS=16 hits → setInterval returns -1 silently.
+
+  Fix options
+  1. Guard with flag (simplest)
+  BLYNK_CONNECTED()
+  {
+    static bool registered = false;
+    if (registered) return;
+    registered = true;
+
+    timer.setInterval(2000L, sendUptime);
+    timer.setInterval(500L,  blinkLed);
+  }
+
+  2. Delete + re-create
+
+  int gHbId = -1;
+
+  BLYNK_CONNECTED()
+  {
+    if (gHbId >= 0) timer.deleteTimer(gHbId);
+    gHbId = timer.setInterval(2000L, sendUptime);
+  }
+
+  Useful if you want timers cleared during disconnect and re-armed fresh.
+
+  3. Register outside BLYNK_CONNECTED
+
+  Put setInterval after BlynkTaskStart in app_main:
+
+  extern "C" void app_main(void)
+  {
+    Eth.begin();
+    BlynkTaskStart(BLYNK_TOKEN, BLYNK_SERVER, 8080, &timer);
+
+    timer.setInterval(2000L, sendUptime);   // once, persistent
+    timer.setInterval(500L,  blinkLed);
+
+    vTaskDelete(NULL);
+  }
+
+  Timers tick regardless of connection. Blynk.virtualWrite from callback silently drops while disconnected (sendCmd early-returns) → no harm.
+
+  ⚠️  Race note for option 3: setInterval from app_main mutates SimpleTimer array while Blynk task may call timer.run(). Tiny race window but possible. Mitigate by registering before BlynkTaskStart:
+
+  timer.setInterval(2000L, sendUptime);
+  timer.setInterval(500L,  blinkLed);
+  BlynkTaskStart(BLYNK_TOKEN, BLYNK_SERVER, 8080, &timer);
+
+  Now task starts with timers already in array. Safe.
+
+  What to use when
+
+  ┌───────────────────────────────────────────────────┬─────────────────────────────┐
+  │                       Need                        │             Use             │
+  ├───────────────────────────────────────────────────┼─────────────────────────────┤
+  │ Fire always, even when offline                    │ Option 3 (before TaskStart) │
+  ├───────────────────────────────────────────────────┼─────────────────────────────┤
+  │ Reset state on each reconnect (counters, retries) │ Option 2                    │
+  ├───────────────────────────────────────────────────┼─────────────────────────────┤
+  │ Just want "register once" simplicity              │ Option 1                    │
+  └───────────────────────────────────────────────────┴─────────────────────────────┘
+
+  Use BLYNK_DISCONNECTED() for cleanup
+
+  BLYNK_DISCONNECTED() { printf("blynk offline\n"); }
+
+  Pair with option 2 if you want timers off while disconnected — call timer.disable(id) here, enable(id) in BLYNK_CONNECTED.
+
+
+
+
+
+
+
+
+
+
+
+
+
